@@ -582,21 +582,29 @@ def main():
                     col1, col2 = st.columns(2)
                     
                     with col1:
+                        # Check if we have a previous selection stored
+                        if 'selected_site' in st.session_state and st.session_state.selected_site in sites:
+                            default_index = sites.index(st.session_state.selected_site)
+                        else:
+                            default_index = 0
+                        
                         selected_site = st.selectbox(
                             "Select Website/Property:",
                             sites,
-                            key="site_selector",
+                            index=default_index,
                             help="Choose the GSC property to analyse"
                         )
                         
-                        # Update session state and clear data when selection changes
-                        if 'selected_site' not in st.session_state or selected_site != st.session_state.selected_site:
+                        # Store the selection and clear data if it changed
+                        if 'selected_site' not in st.session_state:
                             st.session_state.selected_site = selected_site
-                            # Clear previous data when site changes
-                            if 'gsc_data' in st.session_state:
-                                del st.session_state.gsc_data
-                            if 'analysis_results' in st.session_state:
-                                st.session_state.analysis_results = None
+                        elif selected_site != st.session_state.selected_site:
+                            st.session_state.selected_site = selected_site
+                            # Clear data when selection changes
+                            for key in ['gsc_data', 'analysis_results', 'recommendations']:
+                                if key in st.session_state:
+                                    del st.session_state[key]
+                            st.info(f"🔄 Switched to {selected_site}. Please fetch new data.")
                     
                     with col2:
                         # Date range selection with default values
