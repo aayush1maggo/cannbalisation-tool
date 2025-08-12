@@ -114,33 +114,31 @@ class GSCAPIClient:
                     else:
                         client_secrets_file = self.client_secret_file
                     
-                    # Check if we're running on Streamlit Cloud or locally
-                    if 'streamlit.app' in st.get_option('server.headless') or True:  # Always use manual flow for simplicity
-                        # Use manual authorization code flow
-                        flow = Flow.from_client_secrets_file(
-                            client_secrets_file, 
-                            self.scopes
-                        )
-                        flow.redirect_uri = 'urn:ietf:wg:oauth:2.0:oob'
-                        
-                        auth_url, _ = flow.authorization_url(prompt='consent')
-                        
-                        st.markdown(f"### 🔐 Google Search Console Authentication")
-                        st.markdown(f"1. Click the link below to authorise access to your GSC data:")
-                        st.markdown(f"[**Authorise GSC Access**]({auth_url})")
-                        st.markdown(f"2. After authorizing, Google will show you an authorization code")
-                        st.markdown(f"3. Copy that code and paste it below:")
-                        
-                        auth_code = st.text_input(
-                            "Authorization Code", 
-                            placeholder="Paste the authorization code from Google here...",
-                            type="password"
-                        )
-                        
-                        if auth_code:
-                            try:
-                                flow.fetch_token(code=auth_code.strip())
-                                creds = flow.credentials
+                    # Use manual authorization code flow (works for both local and cloud)
+                    flow = Flow.from_client_secrets_file(
+                        client_secrets_file, 
+                        self.scopes
+                    )
+                    flow.redirect_uri = 'urn:ietf:wg:oauth:2.0:oob'
+                    
+                    auth_url, _ = flow.authorization_url(prompt='consent')
+                    
+                    st.markdown(f"### 🔐 Google Search Console Authentication")
+                    st.markdown(f"1. Click the link below to authorise access to your GSC data:")
+                    st.markdown(f"[**Authorise GSC Access**]({auth_url})")
+                    st.markdown(f"2. After authorizing, Google will show you an authorization code")
+                    st.markdown(f"3. Copy that code and paste it below:")
+                    
+                    auth_code = st.text_input(
+                        "Authorization Code", 
+                        placeholder="Paste the authorization code from Google here...",
+                        type="password"
+                    )
+                    
+                    if auth_code:
+                        try:
+                            flow.fetch_token(code=auth_code.strip())
+                            creds = flow.credentials
                             
                             # Save credentials for future use
                             with open('token.pickle', 'wb') as token:
