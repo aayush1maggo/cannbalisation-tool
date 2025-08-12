@@ -575,8 +575,10 @@ def main():
             if gsc_client.authenticate():
                 st.success("🔐 Successfully authenticated with Google Search Console!")
                 
-                # Get available sites
-                sites = gsc_client.get_sites()
+                # Get available sites - cache them in session state
+                if 'gsc_sites' not in st.session_state:
+                    st.session_state.gsc_sites = gsc_client.get_sites()
+                sites = st.session_state.gsc_sites
                 
                 if sites:
                     col1, col2 = st.columns(2)
