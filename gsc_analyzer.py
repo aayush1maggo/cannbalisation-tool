@@ -579,26 +579,40 @@ def main():
                 sites = gsc_client.get_sites()
                 
                 if sites:
+                    # Initialize session state for selected site
+                    if 'selected_site' not in st.session_state:
+                        st.session_state.selected_site = sites[0] if sites else None
+                    
                     col1, col2 = st.columns(2)
                     
                     with col1:
                         selected_site = st.selectbox(
                             "Select Website/Property:",
                             sites,
+                            index=sites.index(st.session_state.selected_site) if st.session_state.selected_site in sites else 0,
+                            key="site_selector",
                             help="Choose the GSC property to analyse"
                         )
+                        # Update session state when selection changes
+                        st.session_state.selected_site = selected_site
                     
                     with col2:
-                        # Date range selection
-                        end_date = datetime.now().date()
-                        start_date = end_date - timedelta(days=90)  # Default to 90 days
+                        # Initialize session state for date range
+                        if 'date_range' not in st.session_state:
+                            end_date = datetime.now().date()
+                            start_date = end_date - timedelta(days=90)  # Default to 90 days
+                            st.session_state.date_range = (start_date, end_date)
                         
                         date_range = st.date_input(
                             "Select Date Range:",
-                            value=(start_date, end_date),
-                            max_value=end_date,
+                            value=st.session_state.date_range,
+                            max_value=datetime.now().date(),
+                            key="date_selector",
                             help="Choose the date range for analysis (minimum 28 days recommended)"
                         )
+                        # Update session state when date changes
+                        if len(date_range) == 2:
+                            st.session_state.date_range = date_range
                     
                     if len(date_range) == 2:
                         start_date, end_date = date_range
