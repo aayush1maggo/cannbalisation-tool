@@ -37,7 +37,7 @@ def get_client_config():
                     "token_uri": st.secrets["google_oauth"]["token_uri"],
                     "auth_provider_x509_cert_url": st.secrets["google_oauth"]["auth_provider_x509_cert_url"],
                     "client_secret": st.secrets["google_oauth"]["client_secret"],
-                    "redirect_uris": st.secrets["google_oauth"].get("redirect_uris", ["urn:ietf:wg:oauth:2.0:oob"])
+                    "redirect_uris": st.secrets["google_oauth"].get("redirect_uris", ["http://localhost:8501/"])
                 }
             }
     except Exception:
@@ -114,44 +114,46 @@ class GSCAPIClient:
                     else:
                         client_secrets_file = self.client_secret_file
                     
-                    # Use manual authorization code flow (works for both local and cloud)
+                    # Set up OAuth flow with proper redirect URI
                     flow = Flow.from_client_secrets_file(
                         client_secrets_file, 
                         self.scopes
                     )
-                    flow.redirect_uri = 'urn:ietf:wg:oauth:2.0:oob'
                     
-                    auth_url, _ = flow.authorization_url(prompt='consent')
+                    # Use localhost redirect for better compatibility
+                    flow.redirect_uri = 'http://localhost:8501/'
                     
-                    st.markdown(f"### 🔐 Google Search Console Authentication")
-                    st.markdown(f"1. Click the link below to authorise access to your GSC data:")
-                    st.markdown(f"[**Authorise GSC Access**]({auth_url})")
-                    st.markdown(f"2. After authorizing, Google will show you an authorization code")
-                    st.markdown(f"3. Copy that code and paste it below:")
+                    # Check if we have the authorization code in the URL params
+                    query_params = st.experimental_get_query_params()
                     
-                    auth_code = st.text_input(
-                        "Authorization Code", 
-                        placeholder="Paste the authorization code from Google here...",
-                        type="password"
-                    )
-                    
-                    if auth_code:
+                    if 'code' in query_params:
+                        # We have the authorization code from the redirect
                         try:
-                            flow.fetch_token(code=auth_code.strip())
+                            auth_code = query_params['code'][0]
+                            flow.fetch_token(code=auth_code)
                             creds = flow.credentials
                             
                             # Save credentials for future use
                             with open('token.pickle', 'wb') as token:
                                 pickle.dump(creds, token)
-                                
-                            st.success("✅ Successfully authenticated with Google Search Console!")
-                            st.rerun()
+                            
+                            # Clear the URL parameters
+                            st.experimental_set_query_params()
                             
                         except Exception as e:
                             st.error(f"Authentication failed: {e}")
                             return False
                     else:
-                        return False
+                        # Show authentication link
+                        auth_url, _ = flow.authorization_url(prompt='consent')
+                        
+                        st.markdown(f"### 🔐 Google Search Console Authentication")
+                        st.markdown(f"1. Click the link below to authorize access to your GSC data:")
+                        st.markdown(f"[**Authorize GSC Access**]({auth_url})")
+                        st.markdown(f"2. You will be redirected back to this app automatically")
+                        st.info("💡 After clicking the link, you may see a security warning. Click 'Advanced' → 'Go to localhost (unsafe)' to continue.")
+                        
+                        return False  # Wait for redirect
                         
                 except Exception as e:
                     st.error(f"Error setting up OAuth flow: {e}")
