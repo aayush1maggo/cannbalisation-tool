@@ -23,14 +23,66 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+def get_client_config():
+    """Get client configuration from Streamlit secrets or local file"""
+    # Try Streamlit secrets first (for deployed version)
+    try:
+        if hasattr(st, 'secrets') and 'google_oauth' in st.secrets:
+            return {
+                "web": {
+                    "client_id": st.secrets["google_oauth"]["client_id"],
+                    "project_id": st.secrets["google_oauth"]["project_id"],
+                    "auth_uri": st.secrets["google_oauth"]["auth_uri"],
+                    "token_uri": st.secrets["google_oauth"]["token_uri"],
+                    "auth_provider_x509_cert_url": st.secrets["google_oauth"]["auth_provider_x509_cert_url"],
+                    "client_secret": st.secrets["google_oauth"]["client_secret"],
+                    "redirect_uris": st.secrets["google_oauth"].get("redirect_uris", ["urn:ietf:wg:oauth:2.0:oob"])
+                }
+            }
+    except Exception:
+        pass  # Secrets not available, fall back to file
+    
+    # Fall back to local file
+    expected_filename = "client_secret_483732917438-avvch65f4jrtvklqhqksvvjsu0k4gq4h.apps.googleusercontent.com.json"
+    
+    # Try different possible locations
+    search_locations = [
+        expected_filename,  # Current directory
+        os.path.join(os.path.dirname(__file__), expected_filename),  # Same directory as script
+        os.path.join(os.getcwd(), expected_filename),  # Working directory
+    ]
+    
+    # Look for any client_secret*.json file if expected one not found
+    for location in search_locations:
+        if os.path.exists(location):
+            try:
+                with open(location, 'r') as f:
+                    return json.load(f)
+            except:
+                continue
+    
+    # If not found, look for any client_secret*.json file
+    for root, dirs, files in os.walk('.'):
+        for file in files:
+            if file.startswith('client_secret_') and file.endswith('.json'):
+                try:
+                    with open(os.path.join(root, file), 'r') as f:
+                        return json.load(f)
+                except:
+                    continue
+    
+    return None
+
 class GSCAPIClient:
     """Google Search Console API Client with OAuth authentication"""
     
-    def __init__(self, client_secret_file):
+    def __init__(self, client_config=None, client_secret_file=None):
+        self.client_config = client_config
         self.client_secret_file = client_secret_file
         self.scopes = ['https://www.googleapis.com/auth/webmasters.readonly']
         self.credentials = None
         self.service = None
+        self.temp_file = None
     
     def authenticate(self):
         """Handle OAuth authentication flow"""
@@ -51,8 +103,18 @@ class GSCAPIClient:
                     return False
             else:
                 try:
+                    # Use client_config if available, otherwise fall back to file
+                    if self.client_config:
+                        # Create temporary file for client config
+                        self.temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
+                        json.dump(self.client_config, self.temp_file, indent=2)
+                        self.temp_file.close()
+                        client_secrets_file = self.temp_file.name
+                    else:
+                        client_secrets_file = self.client_secret_file
+                    
                     flow = Flow.from_client_secrets_file(
-                        self.client_secret_file, 
+                        client_secrets_file, 
                         self.scopes
                     )
                     flow.redirect_uri = 'urn:ietf:wg:oauth:2.0:oob'
@@ -476,18 +538,34 @@ def main():
     else:  # Google Search Console connection
         st.subheader("🔗 Google Search Console Connection")
         
-        # Check if client secret file exists
-        client_secret_file = "client_secret_483732917438-avvch65f4jrtvklqhqksvvjsu0k4gq4h.apps.googleusercontent.com.json"
+        # Get client configuration from secrets or file
+        client_config = get_client_config()
         
-        if not os.path.exists(client_secret_file):
-            st.error(f"❌ Client secret file not found: `{client_secret_file}`")
+        if not client_config:
+            st.error("❌ OAuth credentials not configured")
             st.markdown("""
             **To use Google Search Console API:**
-            1. Ensure your client secret JSON file is in the same directory
-            2. The file should be named exactly as shown above
+            
+            **For Streamlit Cloud:**
+            1. Go to your app settings → Secrets
+            2. Add your OAuth configuration:
+            ```toml
+            [google_oauth]
+            client_id = "YOUR_CLIENT_ID_HERE"
+            project_id = "YOUR_PROJECT_ID_HERE"
+            auth_uri = "https://accounts.google.com/o/oauth2/auth"
+            token_uri = "https://oauth2.googleapis.com/token"
+            auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
+            client_secret = "YOUR_CLIENT_SECRET_HERE"
+            ```
+            
+            **For Local Development:**
+            1. **Option A (Secrets)**: Create `.streamlit/secrets.toml` with the configuration above
+            2. **Option B (File)**: Place your `client_secret_*.json` file in the same directory as `gsc_analyzer.py`
+            3. The file should be named: `client_secret_483732917438-avvch65f4jrtvklqhqksvvjsu0k4gq4h.apps.googleusercontent.com.json`
             """)
         else:
-            gsc_client = GSCAPIClient(client_secret_file)
+            gsc_client = GSCAPIClient(client_config=client_config)
             
             if gsc_client.authenticate():
                 st.success("🔐 Successfully authenticated with Google Search Console!")
