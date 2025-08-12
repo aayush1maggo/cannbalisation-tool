@@ -720,28 +720,27 @@ def display_data_overview_and_analysis(data, analyzer):
     if date_range_days < analyzer.thresholds['min_window_days']:
         st.warning(f"⚠️ Data window is only {date_range_days} days. Minimum {analyzer.thresholds['min_window_days']} days recommended for reliable analysis.")
     
-    # Run analysis
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        run_analysis = st.button("🔍 Run Analysis", type="primary")
-    with col2:
-        if st.session_state.get('analysis_results') is not None:
-            if st.button("🗑️ Clear Results"):
-                st.session_state.analysis_results = None
-                st.session_state.recommendations = None
-                st.rerun()
-    
-    # Debug: Show button state
-    if run_analysis:
-        st.write("🐛 Debug: Analysis button was clicked!")
-    else:
-        st.write("🐛 Debug: Analysis button not clicked yet")
+    # Run analysis - using form to prevent rerun conflicts
+    with st.form("analysis_form"):
+        st.write("### 🔍 Analysis Configuration")
+        col1, col2 = st.columns([3, 1])
         
-    # Show data shape for debugging
-    st.write(f"🐛 Debug: Data shape: {data.shape}")
-    st.write(f"🐛 Debug: Data columns: {list(data.columns)}")
-    st.write(f"🐛 Debug: Sample data:")
-    st.dataframe(data.head(3))
+        with col1:
+            run_analysis = st.form_submit_button("🔍 Run Analysis", type="primary")
+        with col2:
+            if st.session_state.get('analysis_results') is not None:
+                if st.form_submit_button("🗑️ Clear Results"):
+                    st.session_state.analysis_results = None
+                    st.session_state.recommendations = None
+                    st.rerun()
+    
+    # Debug: Show data info
+    st.write(f"🐛 Debug: Data shape: {data.shape}, Queries: {data['query'].nunique()}")
+    
+    # Alternative button outside form as backup
+    if not run_analysis:
+        st.write("Or try this backup button:")
+        run_analysis = st.button("🚀 Run Analysis (Backup)", key="backup_analysis", type="secondary")
     
     # Initialize analysis results in session state
     if 'analysis_results' not in st.session_state:
@@ -750,6 +749,8 @@ def display_data_overview_and_analysis(data, analyzer):
         st.session_state.recommendations = None
     
     if run_analysis:
+        st.balloons()  # Visual confirmation that button was clicked
+        st.success("🐛 DEBUG: Analysis button was successfully clicked!")
         st.info("🔄 Starting analysis...")
         try:
             with st.spinner("Analyzing queries..."):
