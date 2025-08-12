@@ -594,7 +594,13 @@ def main():
                             help="Choose the GSC property to analyse"
                         )
                         # Update session state when selection changes
-                        st.session_state.selected_site = selected_site
+                        if selected_site != st.session_state.selected_site:
+                            st.session_state.selected_site = selected_site
+                            # Clear previous data when site changes
+                            if 'gsc_data' in st.session_state:
+                                del st.session_state.gsc_data
+                            if 'analysis_results' in st.session_state:
+                                st.session_state.analysis_results = None
                     
                     with col2:
                         # Initialize session state for date range
@@ -611,8 +617,13 @@ def main():
                             help="Choose the date range for analysis (minimum 28 days recommended)"
                         )
                         # Update session state when date changes
-                        if len(date_range) == 2:
+                        if len(date_range) == 2 and date_range != st.session_state.date_range:
                             st.session_state.date_range = date_range
+                            # Clear previous data when date changes
+                            if 'gsc_data' in st.session_state:
+                                del st.session_state.gsc_data
+                            if 'analysis_results' in st.session_state:
+                                st.session_state.analysis_results = None
                     
                     if len(date_range) == 2:
                         start_date, end_date = date_range
@@ -621,7 +632,9 @@ def main():
                         if days_diff < 28:
                             st.warning(f"⚠️ Selected range is only {days_diff} days. Minimum 28 days recommended for reliable analysis.")
                         
-                        if st.button("📥 Fetch GSC Data", type="primary"):
+                        fetch_data = st.button("📥 Fetch GSC Data", type="primary")
+                        
+                        if fetch_data:
                             with st.spinner("Fetching data from Google Search Console..."):
                                 data = gsc_client.fetch_gsc_data(
                                     selected_site,
@@ -630,7 +643,14 @@ def main():
                                 )
                                 
                                 if data is not None:
+                                    st.session_state.gsc_data = data
                                     st.success(f"✅ Successfully fetched {len(data):,} rows of GSC data!")
+                        
+                        # Use stored data if available
+                        if 'gsc_data' in st.session_state:
+                            data = st.session_state.gsc_data
+                        else:
+                            data = None
                 else:
                     st.error("❌ No GSC properties found. Please ensure you have access to at least one Search Console property.")
     
@@ -720,27 +740,20 @@ def display_data_overview_and_analysis(data, analyzer):
     if date_range_days < analyzer.thresholds['min_window_days']:
         st.warning(f"⚠️ Data window is only {date_range_days} days. Minimum {analyzer.thresholds['min_window_days']} days recommended for reliable analysis.")
     
-    # Run analysis - using form to prevent rerun conflicts
-    with st.form("analysis_form"):
-        st.write("### 🔍 Analysis Configuration")
-        col1, col2 = st.columns([3, 1])
-        
-        with col1:
-            run_analysis = st.form_submit_button("🔍 Run Analysis", type="primary")
-        with col2:
-            if st.session_state.get('analysis_results') is not None:
-                if st.form_submit_button("🗑️ Clear Results"):
-                    st.session_state.analysis_results = None
-                    st.session_state.recommendations = None
-                    st.rerun()
+    # Run analysis
+    st.write("### 🔍 Analysis Configuration")
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        run_analysis = st.button("🔍 Run Analysis", type="primary", key="main_analysis_btn")
+    with col2:
+        if st.session_state.get('analysis_results') is not None:
+            if st.button("🗑️ Clear Results", key="clear_btn"):
+                st.session_state.analysis_results = None
+                st.session_state.recommendations = None
     
     # Debug: Show data info
     st.write(f"🐛 Debug: Data shape: {data.shape}, Queries: {data['query'].nunique()}")
-    
-    # Alternative button outside form as backup
-    if not run_analysis:
-        st.write("Or try this backup button:")
-        run_analysis = st.button("🚀 Run Analysis (Backup)", key="backup_analysis", type="secondary")
     
     # Initialize analysis results in session state
     if 'analysis_results' not in st.session_state:
