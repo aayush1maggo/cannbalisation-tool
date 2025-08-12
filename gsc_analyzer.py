@@ -731,6 +731,18 @@ def display_data_overview_and_analysis(data, analyzer):
                 st.session_state.recommendations = None
                 st.rerun()
     
+    # Debug: Show button state
+    if run_analysis:
+        st.write("🐛 Debug: Analysis button was clicked!")
+    else:
+        st.write("🐛 Debug: Analysis button not clicked yet")
+        
+    # Show data shape for debugging
+    st.write(f"🐛 Debug: Data shape: {data.shape}")
+    st.write(f"🐛 Debug: Data columns: {list(data.columns)}")
+    st.write(f"🐛 Debug: Sample data:")
+    st.dataframe(data.head(3))
+    
     # Initialize analysis results in session state
     if 'analysis_results' not in st.session_state:
         st.session_state.analysis_results = None
@@ -738,26 +750,39 @@ def display_data_overview_and_analysis(data, analyzer):
         st.session_state.recommendations = None
     
     if run_analysis:
-        with st.spinner("Analyzing queries..."):
-            # Group by query and analyze
-            analysis_results = []
-            queries = data['query'].unique()
+        st.info("🔄 Starting analysis...")
+        try:
+            with st.spinner("Analyzing queries..."):
+                # Group by query and analyze
+                analysis_results = []
+                queries = data['query'].unique()
+                
+                st.write(f"Debug: Found {len(queries)} unique queries to analyze")
+                
+                progress_bar = st.progress(0)
+                for i, query in enumerate(queries):
+                    query_data = data[data['query'] == query]
+                    result = analyzer.analyze_query(query_data)
+                    analysis_results.append(result)
+                    progress_bar.progress((i + 1) / len(queries))
+                
+                progress_bar.empty()
             
-            progress_bar = st.progress(0)
-            for i, query in enumerate(queries):
-                query_data = data[data['query'] == query]
-                result = analyzer.analyze_query(query_data)
-                analysis_results.append(result)
-                progress_bar.progress((i + 1) / len(queries))
+            # Generate recommendations
+            st.info("📊 Generating recommendations...")
+            recommendations = analyzer.generate_recommendations(analysis_results)
             
-            progress_bar.empty()
-        
-        # Generate recommendations
-        recommendations = analyzer.generate_recommendations(analysis_results)
-        
-        # Store results in session state
-        st.session_state.analysis_results = analysis_results
-        st.session_state.recommendations = recommendations
+            # Store results in session state
+            st.session_state.analysis_results = analysis_results
+            st.session_state.recommendations = recommendations
+            
+            st.success(f"✅ Analysis complete! Analyzed {len(queries)} queries.")
+            
+        except Exception as e:
+            st.error(f"❌ Error during analysis: {str(e)}")
+            st.write(f"Debug error details: {e}")
+            import traceback
+            st.code(traceback.format_exc())
     
     # Display results if available
     if st.session_state.analysis_results is not None:
