@@ -9,6 +9,11 @@ A Streamlit tool that analyzes Google Search Console data to identify keyword ca
 - **Diversification Recognition**: Recognises beneficial multi-page rankings that capture different user intents
 - **Trend Analysis**: Uses line charts to visualise ranking patterns and detect swapping behaviour
 
+### 🔗 **Dual Data Sources**
+- **File Upload**: Traditional CSV/JSON file upload for offline analysis
+- **Google Search Console API**: Direct OAuth integration for real-time GSC data fetching
+- **Automatic Authentication**: Secure OAuth flow with credential persistence
+
 ### 📊 **Comprehensive Metrics**
 - Leader change tracking (page swapping detection)
 - Simultaneous ranking analysis
@@ -43,12 +48,35 @@ streamlit run gsc_analyzer.py
    - Ensure data spans at least 28 days (longer periods provide better insights)
    - Format as CSV or JSON with required columns
 
-3. **Upload and analyse**:
-   - Upload your data file through the web interface
+3. **Choose your data source**:
+   - **Option A - File Upload**: Upload CSV/JSON file through the web interface
+   - **Option B - Google Search Console**: Use OAuth to connect directly to your GSC account
+   
+4. **Configure and analyse**:
    - Adjust analysis thresholds in the sidebar if needed
+   - For GSC API: Select your website property and date range
    - Click "Run Analysis" to process your data
 
-## Data Requirements
+## Google Search Console API Setup
+
+### Prerequisites
+1. **Google Cloud Project**: Create a project in [Google Cloud Console](https://console.cloud.google.com/)
+2. **Enable Search Console API**: Enable the Google Search Console API for your project
+3. **OAuth 2.0 Credentials**: Create OAuth 2.0 client credentials (Web application type)
+4. **Download Credentials**: Download the client secret JSON file
+
+### Setup Steps
+1. Place your `client_secret_*.json` file in the same directory as `gsc_analyzer.py`
+2. The filename should match exactly: `client_secret_483732917438-avvch65f4jrtvklqhqksvvjsu0k4gq4h.apps.googleusercontent.com.json`
+3. Run the application and select "🔗 Connect to Google Search Console"
+4. Follow the OAuth flow to authorize access to your GSC data
+
+### Security Notes
+- Credentials are stored locally in `token.pickle` for reuse
+- The `.gitignore` file protects sensitive files from being committed
+- Only read-only access to Search Console data is requested
+
+## Data Requirements (File Upload)
 
 Your CSV or JSON file must contain these columns:
 

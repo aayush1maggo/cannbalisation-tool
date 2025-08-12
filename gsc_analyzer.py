@@ -8,6 +8,12 @@ from datetime import datetime, timedelta
 import re
 from typing import Dict, List, Tuple, Optional
 import json
+import os
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import Flow
+from googleapiclient.discovery import build
+from google.auth.transport.requests import Request
+import pickle
 
 # Page configuration
 st.set_page_config(
@@ -16,6 +22,137 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+class GSCAPIClient:
+    """Google Search Console API Client with OAuth authentication"""
+    
+    def __init__(self, client_secret_file):
+        self.client_secret_file = client_secret_file
+        self.scopes = ['https://www.googleapis.com/auth/webmasters.readonly']
+        self.credentials = None
+        self.service = None
+    
+    def authenticate(self):
+        """Handle OAuth authentication flow"""
+        creds = None
+        
+        # Check if we have stored credentials
+        if os.path.exists('token.pickle'):
+            with open('token.pickle', 'rb') as token:
+                creds = pickle.load(token)
+        
+        # If there are no (valid) credentials available, let the user log in
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                try:
+                    creds.refresh(Request())
+                except Exception as e:
+                    st.error(f"Error refreshing credentials: {e}")
+                    return False
+            else:
+                try:
+                    flow = Flow.from_client_secrets_file(
+                        self.client_secret_file, 
+                        self.scopes
+                    )
+                    flow.redirect_uri = 'urn:ietf:wg:oauth:2.0:oob'
+                    
+                    auth_url, _ = flow.authorization_url(prompt='consent')
+                    
+                    st.markdown(f"### 🔐 Google Search Console Authentication")
+                    st.markdown(f"1. Click the link below to authorise access to your GSC data:")
+                    st.markdown(f"[**Authorise GSC Access**]({auth_url})")
+                    st.markdown(f"2. Copy the authorisation code and paste it below:")
+                    
+                    auth_code = st.text_input(
+                        "Authorisation Code", 
+                        placeholder="Paste the code from Google here...",
+                        type="password"
+                    )
+                    
+                    if auth_code:
+                        try:
+                            flow.fetch_token(code=auth_code)
+                            creds = flow.credentials
+                            
+                            # Save credentials for future use
+                            with open('token.pickle', 'wb') as token:
+                                pickle.dump(creds, token)
+                                
+                            st.success("✅ Successfully authenticated with Google Search Console!")
+                            st.rerun()
+                            
+                        except Exception as e:
+                            st.error(f"Authentication failed: {e}")
+                            return False
+                    else:
+                        return False
+                        
+                except Exception as e:
+                    st.error(f"Error setting up OAuth flow: {e}")
+                    return False
+        
+        self.credentials = creds
+        self.service = build('searchconsole', 'v1', credentials=creds)
+        return True
+    
+    def get_sites(self):
+        """Get list of available sites/properties"""
+        if not self.service:
+            return []
+        
+        try:
+            sites = self.service.sites().list().execute()
+            return [site['siteUrl'] for site in sites.get('siteEntry', [])]
+        except Exception as e:
+            st.error(f"Error fetching sites: {e}")
+            return []
+    
+    def fetch_gsc_data(self, site_url: str, start_date: str, end_date: str, max_rows: int = 25000):
+        """Fetch GSC data for the specified site and date range"""
+        if not self.service:
+            st.error("Not authenticated. Please authenticate first.")
+            return None
+        
+        try:
+            request = {
+                'startDate': start_date,
+                'endDate': end_date,
+                'dimensions': ['date', 'query', 'page'],
+                'rowLimit': max_rows,
+                'startRow': 0
+            }
+            
+            response = self.service.searchanalytics().query(
+                siteUrl=site_url, 
+                body=request
+            ).execute()
+            
+            if 'rows' not in response:
+                st.warning("No data found for the specified date range.")
+                return None
+            
+            # Convert to DataFrame
+            data = []
+            for row in response['rows']:
+                data.append({
+                    'date': row['keys'][0],
+                    'query': row['keys'][1],
+                    'page': row['keys'][2],
+                    'clicks': row['clicks'],
+                    'impressions': row['impressions'],
+                    'ctr': row['ctr'],
+                    'position': row['position']
+                })
+            
+            df = pd.DataFrame(data)
+            df['date'] = pd.to_datetime(df['date'])
+            
+            return df
+            
+        except Exception as e:
+            st.error(f"Error fetching GSC data: {e}")
+            return None
 
 class GSCAnalyzer:
     """Google Search Console Cannibalization vs Diversification Analyzer"""
@@ -315,230 +452,320 @@ def main():
     analyzer.thresholds['min_second_share'] = st.sidebar.slider("Min Second Page Share %", 5, 30, 15)
     analyzer.thresholds['uplift_min'] = st.sidebar.slider("Minimum Uplift", 0.05, 0.5, 0.15, 0.05)
     
-    # File upload
-    st.header("📁 Upload GSC Data")
-    uploaded_file = st.file_uploader(
-        "Upload CSV or JSON file with GSC data",
-        type=['csv', 'json'],
-        help="Required columns: date, query, page, clicks, impressions, ctr, position"
+    # Data source selection
+    st.header("📊 Data Source")
+    data_source = st.radio(
+        "Choose your data source:",
+        ["📁 Upload CSV/JSON File", "🔗 Connect to Google Search Console"],
+        horizontal=True
     )
     
-    if uploaded_file is not None:
-        try:
-            # Load data
-            if uploaded_file.name.endswith('.csv'):
-                data = pd.read_csv(uploaded_file)
-            else:
-                data = pd.read_json(uploaded_file)
-            
-            # Validate columns
-            required_columns = ['date', 'query', 'page', 'clicks', 'impressions', 'ctr', 'position']
-            missing_columns = [col for col in required_columns if col not in data.columns]
-            
-            if missing_columns:
-                st.error(f"Missing required columns: {', '.join(missing_columns)}")
-                return
-            
-            # Convert date column
-            data['date'] = pd.to_datetime(data['date'])
-            
-            # Data overview
-            st.header("📊 Data Overview")
-            col1, col2, col3, col4 = st.columns(4)
-            
-            with col1:
-                st.metric("Total Queries", data['query'].nunique())
-            with col2:
-                st.metric("Total Pages", data['page'].nunique())
-            with col3:
-                st.metric("Date Range", f"{(data['date'].max() - data['date'].min()).days} days")
-            with col4:
-                st.metric("Total Clicks", f"{data['clicks'].sum():,}")
-            
-            # Date range warning
-            date_range_days = (data['date'].max() - data['date'].min()).days
-            if date_range_days < analyzer.thresholds['min_window_days']:
-                st.warning(f"⚠️ Data window is only {date_range_days} days. Minimum {analyzer.thresholds['min_window_days']} days recommended for reliable analysis.")
-            
-            # Run analysis
-            if st.button("🔍 Run Analysis", type="primary"):
-                with st.spinner("Analyzing queries..."):
-                    # Group by query and analyze
-                    analysis_results = []
-                    queries = data['query'].unique()
-                    
-                    progress_bar = st.progress(0)
-                    for i, query in enumerate(queries):
-                        query_data = data[data['query'] == query]
-                        result = analyzer.analyze_query(query_data)
-                        analysis_results.append(result)
-                        progress_bar.progress((i + 1) / len(queries))
-                    
-                    progress_bar.empty()
-                
-                # Generate recommendations
-                recommendations = analyzer.generate_recommendations(analysis_results)
-                
-                # Results summary
-                st.header("📈 Analysis Results")
-                
-                cannibalization_count = len([r for r in analysis_results if r['classification'] == 'CANNIBALIZATION'])
-                diversification_count = len([r for r in analysis_results if r['classification'] == 'DIVERSIFICATION'])
-                neutral_count = len([r for r in analysis_results if r['classification'] == 'NEUTRAL'])
-                
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("🔴 Cannibalization Issues", cannibalization_count)
-                with col2:
-                    st.metric("🟢 Diversification Wins", diversification_count)
-                with col3:
-                    st.metric("⚪ Neutral/Monitor", neutral_count)
-                
-                # Human-friendly brief
-                st.header("📝 Executive Summary")
-                
-                brief_points = [
-                    f"**Analysis Period:** {date_range_days} days ({data['date'].min().strftime('%Y-%m-%d')} to {data['date'].max().strftime('%Y-%m-%d')})",
-                    f"**Total Queries Analyzed:** {len(queries):,}",
-                    f"**Cannibalization Issues Found:** {cannibalization_count} queries need attention",
-                    f"**Diversification Opportunities:** {diversification_count} queries performing well with multiple pages"
-                ]
-                
-                if cannibalization_count > 0:
-                    total_cannibal_clicks = sum(r['metrics']['total_clicks'] for r in analysis_results if r['classification'] == 'CANNIBALIZATION')
-                    brief_points.append(f"**Potential Recovery:** Up to {total_cannibal_clicks * 0.3:.0f} additional clicks from fixing cannibalization")
-                
-                if diversification_count > 0:
-                    total_diversification_clicks = sum(r['metrics']['total_clicks'] for r in analysis_results if r['classification'] == 'DIVERSIFICATION')
-                    brief_points.append(f"**Diversification Value:** {total_diversification_clicks:.0f} clicks from healthy multi-page rankings")
-                
-                brief_points.extend([
-                    "**Next Steps:** Review recommendations below and prioritise high-traffic fixes",
-                    "**Owner:** SEO team should implement consolidation and optimisation strategies"
-                ])
-                
-                for point in brief_points:
-                    st.markdown(f"• {point}")
-                
-                # Detailed results tabs
-                tab1, tab2, tab3, tab4 = st.tabs(["🔴 Cannibalization", "🟢 Diversification", "📊 Visualizations", "📋 All Results"])
-                
-                with tab1:
-                    st.subheader("Cannibalization Issues (Top 5 Fixes)")
-                    if recommendations['cannibalization']:
-                        for i, rec in enumerate(recommendations['cannibalization'], 1):
-                            with st.expander(f"{i}. {rec['query']} - {rec['priority']} Priority"):
-                                st.write(f"**Action:** {rec['action']}")
-                                st.write(f"**Expected Uplift:** {rec['expected_uplift']}")
-                                st.write("**Recommended Steps:**")
-                                for detail in rec['details']:
-                                    st.write(f"• {detail}")
-                    else:
-                        st.info("No cannibalization issues found.")
-                
-                with tab2:
-                    st.subheader("Diversification Wins (Top 5)")
-                    if recommendations['diversification']:
-                        for i, rec in enumerate(recommendations['diversification'], 1):
-                            with st.expander(f"{i}. {rec['query']}"):
-                                st.write(f"**Action:** {rec['action']}")
-                                st.write(f"**Current Benefit:** {rec['current_benefit']}")
-                                st.write("**Optimisation Steps:**")
-                                for detail in rec['details']:
-                                    st.write(f"• {detail}")
-                    else:
-                        st.info("No diversification opportunities found.")
-                
-                with tab3:
-                    st.subheader("Trend Visualizations")
-                    
-                    # Select queries to visualize
-                    viz_queries = []
-                    for result in analysis_results:
-                        if result['classification'] in ['CANNIBALIZATION', 'DIVERSIFICATION']:
-                            viz_queries.append(result['query'])
-                    
-                    if viz_queries:
-                        selected_query = st.selectbox("Select Query to Visualize", viz_queries[:10])  # Limit to top 10
-                        
-                        if selected_query:
-                            fig = analyzer.create_trend_visualization(data, selected_query)
-                            st.plotly_chart(fig, use_container_width=True)
-                    else:
-                        st.info("No queries available for visualization.")
-                
-                with tab4:
-                    st.subheader("Complete Analysis Results")
-                    
-                    # Create results dataframe
-                    results_df = []
-                    for result in analysis_results:
-                        if 'metrics' in result:
-                            row = {
-                                'Query': result['query'],
-                                'Classification': result['classification'],
-                                'Total Clicks': result['metrics']['total_clicks'],
-                                'Leader Changes': result['metrics']['leader_changes'],
-                                'Simultaneous %': f"{result['metrics']['simultaneous_pct']:.1f}%",
-                                'URL Similarity': f"{result['metrics']['jaccard_similarity']:.2f}",
-                                'Top Page': result['metrics']['top_page'],
-                                'Second Page': result['metrics']['second_page']
-                            }
-                        else:
-                            row = {
-                                'Query': result['query'],
-                                'Classification': result['classification'],
-                                'Reason': result.get('reason', 'N/A')
-                            }
-                        results_df.append(row)
-                    
-                    results_df = pd.DataFrame(results_df)
-                    st.dataframe(results_df, use_container_width=True)
-                    
-                    # Download results
-                    csv = results_df.to_csv(index=False)
-                    st.download_button(
-                        label="📥 Download Results as CSV",
-                        data=csv,
-                        file_name=f"gsc_analysis_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                        mime="text/csv"
-                    )
-        
-        except Exception as e:
-            st.error(f"Error processing file: {str(e)}")
+    data = None
     
+    if data_source == "📁 Upload CSV/JSON File":
+        st.subheader("📁 Upload GSC Data")
+        uploaded_file = st.file_uploader(
+            "Upload CSV or JSON file with GSC data",
+            type=['csv', 'json'],
+            help="Required columns: date, query, page, clicks, impressions, ctr, position"
+        )
+        
+        if uploaded_file is not None:
+            data = load_uploaded_data(uploaded_file)
+    
+    else:  # Google Search Console connection
+        st.subheader("🔗 Google Search Console Connection")
+        
+        # Check if client secret file exists
+        client_secret_file = "client_secret_483732917438-avvch65f4jrtvklqhqksvvjsu0k4gq4h.apps.googleusercontent.com.json"
+        
+        if not os.path.exists(client_secret_file):
+            st.error(f"❌ Client secret file not found: `{client_secret_file}`")
+            st.markdown("""
+            **To use Google Search Console API:**
+            1. Ensure your client secret JSON file is in the same directory
+            2. The file should be named exactly as shown above
+            """)
+        else:
+            gsc_client = GSCAPIClient(client_secret_file)
+            
+            if gsc_client.authenticate():
+                st.success("🔐 Successfully authenticated with Google Search Console!")
+                
+                # Get available sites
+                sites = gsc_client.get_sites()
+                
+                if sites:
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        selected_site = st.selectbox(
+                            "Select Website/Property:",
+                            sites,
+                            help="Choose the GSC property to analyse"
+                        )
+                    
+                    with col2:
+                        # Date range selection
+                        end_date = datetime.now().date()
+                        start_date = end_date - timedelta(days=90)  # Default to 90 days
+                        
+                        date_range = st.date_input(
+                            "Select Date Range:",
+                            value=(start_date, end_date),
+                            max_value=end_date,
+                            help="Choose the date range for analysis (minimum 28 days recommended)"
+                        )
+                    
+                    if len(date_range) == 2:
+                        start_date, end_date = date_range
+                        days_diff = (end_date - start_date).days
+                        
+                        if days_diff < 28:
+                            st.warning(f"⚠️ Selected range is only {days_diff} days. Minimum 28 days recommended for reliable analysis.")
+                        
+                        if st.button("📥 Fetch GSC Data", type="primary"):
+                            with st.spinner("Fetching data from Google Search Console..."):
+                                data = gsc_client.fetch_gsc_data(
+                                    selected_site,
+                                    start_date.strftime('%Y-%m-%d'),
+                                    end_date.strftime('%Y-%m-%d')
+                                )
+                                
+                                if data is not None:
+                                    st.success(f"✅ Successfully fetched {len(data):,} rows of GSC data!")
+                else:
+                    st.error("❌ No GSC properties found. Please ensure you have access to at least one Search Console property.")
+    
+    # Process data if available
+    if data is not None:
+        display_data_overview_and_analysis(data, analyzer)
     else:
-        # Sample data format
-        st.header("📋 Data Format Requirements")
-        st.markdown("""
-        Your CSV or JSON file should contain the following columns:
+        # Show sample data format when no data is loaded
+        show_sample_data_format()
+
+def show_sample_data_format():
+    """Show sample data format and requirements"""
+    st.header("📋 Data Format Requirements")
+    st.markdown("""
+    Your CSV or JSON file should contain the following columns:
+    
+    - **date**: Date in YYYY-MM-DD format
+    - **query**: Search query/keyword
+    - **page**: Full URL of the ranking page
+    - **clicks**: Number of clicks
+    - **impressions**: Number of impressions
+    - **ctr**: Click-through rate (decimal)
+    - **position**: Average position in search results
+    
+    **Minimum Requirements:**
+    - At least 28 days of data (longer periods provide better insights)
+    - One row per (date, query, page) combination
+    - Data exported from Google Search Console
+    """)
+    
+    # Sample data
+    st.subheader("Sample Data Format")
+    sample_data = pd.DataFrame({
+        'date': ['2024-01-01', '2024-01-01', '2024-01-02', '2024-01-02'],
+        'query': ['seo tools', 'seo tools', 'seo tools', 'seo tools'],
+        'page': ['https://example.com/seo-tools', 'https://example.com/best-seo-tools', 'https://example.com/seo-tools', 'https://example.com/best-seo-tools'],
+        'clicks': [45, 23, 52, 18],
+        'impressions': [1200, 800, 1350, 750],
+        'ctr': [0.0375, 0.0288, 0.0385, 0.024],
+        'position': [3.2, 5.8, 2.9, 6.1]
+    })
+    st.dataframe(sample_data)
+
+def load_uploaded_data(uploaded_file):
+    """Load and validate uploaded CSV/JSON data"""
+    try:
+        # Load data
+        if uploaded_file.name.endswith('.csv'):
+            data = pd.read_csv(uploaded_file)
+        else:
+            data = pd.read_json(uploaded_file)
         
-        - **date**: Date in YYYY-MM-DD format
-        - **query**: Search query/keyword
-        - **page**: Full URL of the ranking page
-        - **clicks**: Number of clicks
-        - **impressions**: Number of impressions
-        - **ctr**: Click-through rate (decimal)
-        - **position**: Average position in search results
+        # Validate columns
+        required_columns = ['date', 'query', 'page', 'clicks', 'impressions', 'ctr', 'position']
+        missing_columns = [col for col in required_columns if col not in data.columns]
         
-        **Minimum Requirements:**
-        - At least 28 days of data (longer periods provide better insights)
-        - One row per (date, query, page) combination
-        - Data exported from Google Search Console
-        """)
+        if missing_columns:
+            st.error(f"Missing required columns: {', '.join(missing_columns)}")
+            return None
         
-        # Sample data
-        st.subheader("Sample Data Format")
-        sample_data = pd.DataFrame({
-            'date': ['2024-01-01', '2024-01-01', '2024-01-02', '2024-01-02'],
-            'query': ['seo tools', 'seo tools', 'seo tools', 'seo tools'],
-            'page': ['https://example.com/seo-tools', 'https://example.com/best-seo-tools', 'https://example.com/seo-tools', 'https://example.com/best-seo-tools'],
-            'clicks': [45, 23, 52, 18],
-            'impressions': [1200, 800, 1350, 750],
-            'ctr': [0.0375, 0.0288, 0.0385, 0.024],
-            'position': [3.2, 5.8, 2.9, 6.1]
-        })
-        st.dataframe(sample_data)
+        # Convert date column
+        data['date'] = pd.to_datetime(data['date'])
+        
+        return data
+        
+    except Exception as e:
+        st.error(f"Error processing file: {str(e)}")
+        return None
+
+def display_data_overview_and_analysis(data, analyzer):
+    """Display data overview and run analysis"""
+    # Data overview
+    st.header("📊 Data Overview")
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("Total Queries", data['query'].nunique())
+    with col2:
+        st.metric("Total Pages", data['page'].nunique())
+    with col3:
+        st.metric("Date Range", f"{(data['date'].max() - data['date'].min()).days} days")
+    with col4:
+        st.metric("Total Clicks", f"{data['clicks'].sum():,}")
+    
+    # Date range warning
+    date_range_days = (data['date'].max() - data['date'].min()).days
+    if date_range_days < analyzer.thresholds['min_window_days']:
+        st.warning(f"⚠️ Data window is only {date_range_days} days. Minimum {analyzer.thresholds['min_window_days']} days recommended for reliable analysis.")
+    
+    # Run analysis
+    if st.button("🔍 Run Analysis", type="primary"):
+        with st.spinner("Analyzing queries..."):
+            # Group by query and analyze
+            analysis_results = []
+            queries = data['query'].unique()
+            
+            progress_bar = st.progress(0)
+            for i, query in enumerate(queries):
+                query_data = data[data['query'] == query]
+                result = analyzer.analyze_query(query_data)
+                analysis_results.append(result)
+                progress_bar.progress((i + 1) / len(queries))
+            
+            progress_bar.empty()
+        
+        # Generate recommendations
+        recommendations = analyzer.generate_recommendations(analysis_results)
+        
+        # Results summary
+        st.header("📈 Analysis Results")
+        
+        cannibalization_count = len([r for r in analysis_results if r['classification'] == 'CANNIBALIZATION'])
+        diversification_count = len([r for r in analysis_results if r['classification'] == 'DIVERSIFICATION'])
+        neutral_count = len([r for r in analysis_results if r['classification'] == 'NEUTRAL'])
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("🔴 Cannibalization Issues", cannibalization_count)
+        with col2:
+            st.metric("🟢 Diversification Wins", diversification_count)
+        with col3:
+            st.metric("⚪ Neutral/Monitor", neutral_count)
+        
+        # Human-friendly brief
+        st.header("📝 Executive Summary")
+        
+        brief_points = [
+            f"**Analysis Period:** {date_range_days} days ({data['date'].min().strftime('%Y-%m-%d')} to {data['date'].max().strftime('%Y-%m-%d')})",
+            f"**Total Queries Analyzed:** {len(queries):,}",
+            f"**Cannibalization Issues Found:** {cannibalization_count} queries need attention",
+            f"**Diversification Opportunities:** {diversification_count} queries performing well with multiple pages"
+        ]
+        
+        if cannibalization_count > 0:
+            total_cannibal_clicks = sum(r['metrics']['total_clicks'] for r in analysis_results if r['classification'] == 'CANNIBALIZATION')
+            brief_points.append(f"**Potential Recovery:** Up to {total_cannibal_clicks * 0.3:.0f} additional clicks from fixing cannibalization")
+        
+        if diversification_count > 0:
+            total_diversification_clicks = sum(r['metrics']['total_clicks'] for r in analysis_results if r['classification'] == 'DIVERSIFICATION')
+            brief_points.append(f"**Diversification Value:** {total_diversification_clicks:.0f} clicks from healthy multi-page rankings")
+        
+        brief_points.extend([
+            "**Next Steps:** Review recommendations below and prioritise high-traffic fixes",
+            "**Owner:** SEO team should implement consolidation and optimisation strategies"
+        ])
+        
+        for point in brief_points:
+            st.markdown(f"• {point}")
+        
+        # Detailed results tabs
+        tab1, tab2, tab3, tab4 = st.tabs(["🔴 Cannibalization", "🟢 Diversification", "📊 Visualizations", "📋 All Results"])
+        
+        with tab1:
+            st.subheader("Cannibalization Issues (Top 5 Fixes)")
+            if recommendations['cannibalization']:
+                for i, rec in enumerate(recommendations['cannibalization'], 1):
+                    with st.expander(f"{i}. {rec['query']} - {rec['priority']} Priority"):
+                        st.write(f"**Action:** {rec['action']}")
+                        st.write(f"**Expected Uplift:** {rec['expected_uplift']}")
+                        st.write("**Recommended Steps:**")
+                        for detail in rec['details']:
+                            st.write(f"• {detail}")
+            else:
+                st.info("No cannibalization issues found.")
+        
+        with tab2:
+            st.subheader("Diversification Wins (Top 5)")
+            if recommendations['diversification']:
+                for i, rec in enumerate(recommendations['diversification'], 1):
+                    with st.expander(f"{i}. {rec['query']}"):
+                        st.write(f"**Action:** {rec['action']}")
+                        st.write(f"**Current Benefit:** {rec['current_benefit']}")
+                        st.write("**Optimisation Steps:**")
+                        for detail in rec['details']:
+                            st.write(f"• {detail}")
+            else:
+                st.info("No diversification opportunities found.")
+        
+        with tab3:
+            st.subheader("Trend Visualizations")
+            
+            # Select queries to visualize
+            viz_queries = []
+            for result in analysis_results:
+                if result['classification'] in ['CANNIBALIZATION', 'DIVERSIFICATION']:
+                    viz_queries.append(result['query'])
+            
+            if viz_queries:
+                selected_query = st.selectbox("Select Query to Visualize", viz_queries[:10])  # Limit to top 10
+                
+                if selected_query:
+                    fig = analyzer.create_trend_visualization(data, selected_query)
+                    st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("No queries available for visualization.")
+        
+        with tab4:
+            st.subheader("Complete Analysis Results")
+            
+            # Create results dataframe
+            results_df = []
+            for result in analysis_results:
+                if 'metrics' in result:
+                    row = {
+                        'Query': result['query'],
+                        'Classification': result['classification'],
+                        'Total Clicks': result['metrics']['total_clicks'],
+                        'Leader Changes': result['metrics']['leader_changes'],
+                        'Simultaneous %': f"{result['metrics']['simultaneous_pct']:.1f}%",
+                        'URL Similarity': f"{result['metrics']['jaccard_similarity']:.2f}",
+                        'Top Page': result['metrics']['top_page'],
+                        'Second Page': result['metrics']['second_page']
+                    }
+                else:
+                    row = {
+                        'Query': result['query'],
+                        'Classification': result['classification'],
+                        'Reason': result.get('reason', 'N/A')
+                    }
+                results_df.append(row)
+            
+            results_df = pd.DataFrame(results_df)
+            st.dataframe(results_df, use_container_width=True)
+            
+            # Download results
+            csv = results_df.to_csv(index=False)
+            st.download_button(
+                label="📥 Download Results as CSV",
+                data=csv,
+                file_name=f"gsc_analysis_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv"
+            )
 
 if __name__ == "__main__":
     main()
