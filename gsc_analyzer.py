@@ -37,7 +37,7 @@ def get_client_config():
                     "token_uri": st.secrets["google_oauth"]["token_uri"],
                     "auth_provider_x509_cert_url": st.secrets["google_oauth"]["auth_provider_x509_cert_url"],
                     "client_secret": st.secrets["google_oauth"]["client_secret"],
-                    "redirect_uris": st.secrets["google_oauth"].get("redirect_uris", ["urn:ietf:wg:oauth:2.0:oob"])
+                    "redirect_uris": st.secrets["google_oauth"].get("redirect_uris", ["http://localhost:8080/"])
                 }
             }
     except Exception:
@@ -118,7 +118,7 @@ class GSCAPIClient:
                         client_secrets_file, 
                         self.scopes
                     )
-                    flow.redirect_uri = 'urn:ietf:wg:oauth:2.0:oob'
+                    flow.redirect_uri = 'http://localhost:8080/'
                     
                     auth_url, _ = flow.authorization_url(prompt='consent')
                     
