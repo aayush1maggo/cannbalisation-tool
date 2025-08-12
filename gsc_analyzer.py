@@ -582,24 +582,23 @@ def main():
                     col1, col2 = st.columns(2)
                     
                     with col1:
-                        # Check if we have a previous selection stored
-                        if 'selected_site' in st.session_state and st.session_state.selected_site in sites:
-                            default_index = sites.index(st.session_state.selected_site)
-                        else:
-                            default_index = 0
+                        # Initialize the selectbox value in session state
+                        if 'site_selectbox' not in st.session_state:
+                            st.session_state.site_selectbox = sites[0]
                         
+                        # Use session state key to control the selectbox directly
                         selected_site = st.selectbox(
                             "Select Website/Property:",
                             sites,
-                            index=default_index,
+                            key='site_selectbox',  # This directly uses session state
                             help="Choose the GSC property to analyse"
                         )
                         
-                        # Store the selection and clear data if it changed
-                        if 'selected_site' not in st.session_state:
-                            st.session_state.selected_site = selected_site
-                        elif selected_site != st.session_state.selected_site:
-                            st.session_state.selected_site = selected_site
+                        # Clear data when selection changes (check against a separate stored value)
+                        if 'last_selected_site' not in st.session_state:
+                            st.session_state.last_selected_site = selected_site
+                        elif selected_site != st.session_state.last_selected_site:
+                            st.session_state.last_selected_site = selected_site
                             # Clear data when selection changes
                             for key in ['gsc_data', 'analysis_results', 'recommendations']:
                                 if key in st.session_state:
