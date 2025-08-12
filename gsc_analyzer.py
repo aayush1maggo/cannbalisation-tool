@@ -721,7 +721,23 @@ def display_data_overview_and_analysis(data, analyzer):
         st.warning(f"⚠️ Data window is only {date_range_days} days. Minimum {analyzer.thresholds['min_window_days']} days recommended for reliable analysis.")
     
     # Run analysis
-    if st.button("🔍 Run Analysis", type="primary"):
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        run_analysis = st.button("🔍 Run Analysis", type="primary")
+    with col2:
+        if st.session_state.get('analysis_results') is not None:
+            if st.button("🗑️ Clear Results"):
+                st.session_state.analysis_results = None
+                st.session_state.recommendations = None
+                st.rerun()
+    
+    # Initialize analysis results in session state
+    if 'analysis_results' not in st.session_state:
+        st.session_state.analysis_results = None
+    if 'recommendations' not in st.session_state:
+        st.session_state.recommendations = None
+    
+    if run_analysis:
         with st.spinner("Analyzing queries..."):
             # Group by query and analyze
             analysis_results = []
@@ -738,6 +754,15 @@ def display_data_overview_and_analysis(data, analyzer):
         
         # Generate recommendations
         recommendations = analyzer.generate_recommendations(analysis_results)
+        
+        # Store results in session state
+        st.session_state.analysis_results = analysis_results
+        st.session_state.recommendations = recommendations
+    
+    # Display results if available
+    if st.session_state.analysis_results is not None:
+        analysis_results = st.session_state.analysis_results
+        recommendations = st.session_state.recommendations
         
         # Results summary
         st.header("📈 Analysis Results")
